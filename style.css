@@ -1,0 +1,10 @@
+body {
+  margin: 0;
+  overflow: hidden; /* Prevent scrollbars */
+}
+
+#game-canvas {
+  width: 100vw;
+  height: 100vh;
+  display: block; /* Removes default bottom margin */
+}

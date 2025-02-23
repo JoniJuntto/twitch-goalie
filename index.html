@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Soccer Goalkeeper Game</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      canvas {
+        display: block;
+      }
+      #webcam {
+        position: fixed;
+        right: 10px;
+        bottom: 10px;
+        width: 320px;
+        height: 240px;
+        border: 2px solid white;
+      }
+    </style>
+  </head>
+  <body>
+    <video id="webcam" playsinline></video>
+    <script type="module" src="./src/index.ts"></script>
+  </body>
+</html>
