@@ -17,9 +17,33 @@
         height: 240px;
         border: 2px solid white;
       }
+      #saves-counter {
+        position: fixed;
+        left: 20px;
+        top: 20px;
+        color: white;
+        font-size: 24px;
+        font-family: Arial, sans-serif;
+        background: rgba(0, 0, 0, 0.5);
+        padding: 10px;
+        border-radius: 5px;
+      }
+      #goals-counter {
+        position: fixed;
+        left: 20px;
+        top: 60px;
+        color: white;
+        font-size: 24px;
+        font-family: Arial, sans-serif;
+        background: rgba(0, 0, 0, 0.5);
+        padding: 10px;
+        border-radius: 5px;
+      }
     </style>
   </head>
   <body>
+    <div id="saves-counter">Saves: 0</div>
+    <div id="goals-counter">Goals: 0</div>
     <video id="webcam" playsinline></video>
     <script type="module" src="./src/index.ts"></script>
   </body>

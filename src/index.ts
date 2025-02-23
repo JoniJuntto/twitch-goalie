@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { Pose } from "@mediapipe/pose";
+import tmi from "tmi.js";
 
 interface PoseLandmark {
   x: number;
@@ -29,14 +30,33 @@ class GoalkeeperGame {
   private rightHandCollider: RAPIER.Collider | null = null;
   private leftHandMesh: THREE.Mesh;
   private rightHandMesh: THREE.Mesh;
+  private twitchClient: tmi.Client;
 
   // New properties for easier saves
   private handColliderSize = 1.5; // Increased from 1.2
   private ballImpulseMagnitude = 3; // Reduced initial ball impulse
 
+  // Add new property
+  private savesCount: number = 0;
+  private savesCounter: HTMLElement | null = null;
+
+  // Add new properties
+  private goalsCount: number = 0;
+  private goalsCounter: HTMLElement | null = null;
+  private readonly GOAL_BOUNDS = {
+    minX: -7, // Half goal width
+    maxX: 7,
+    minY: 0,
+    maxY: 7, // Goal height
+    z: 0, // Goal position on z-axis
+  };
+
   constructor() {
     this.initializeThreeJS();
+    this.initializeTwitchChat();
     this.initializeGame();
+    this.savesCounter = document.getElementById("saves-counter");
+    this.goalsCounter = document.getElementById("goals-counter");
   }
 
   private async initializeGame() {
@@ -286,15 +306,27 @@ class GoalkeeperGame {
     this.scene.add(hemisphereLight);
   }
 
+  private initializeTwitchChat() {
+    this.twitchClient = new tmi.Client({
+      channels: ["huikkakoodaa"], // Replace with your Twitch channel name
+    });
+
+    this.twitchClient.connect();
+
+    this.twitchClient.on("message", (channel, tags, message, self) => {
+      console.log(message);
+      if (message.toLowerCase() === "!shoot") {
+        this.shootBall();
+      }
+    });
+  }
+
   private shootBall() {
     const now = Date.now();
     if (now - this.lastShot < this.SHOT_INTERVAL) {
-      console.log("Waiting for shot interval");
       return;
     }
     this.lastShot = now;
-
-    console.log("Shooting ball");
 
     const visualSize = 0.35; // Keep small visual size
     const colliderSize = 0.8; // Increased from 0.6
@@ -457,62 +489,33 @@ class GoalkeeperGame {
           console.warn("Could not find rigid body for hand collider.");
         }
       } else {
-        console.warn("Hand collider parent is null or not a number.");
       }
     }
 
-    this.balls.forEach((ball) => {
+    // Update balls and check for goals
+    this.balls = this.balls.filter((ball) => {
       const position = ball.body.translation();
       ball.mesh.position.set(position.x, position.y, position.z);
 
-      const rotation = ball.body.rotation();
-      ball.mesh.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
-    });
-
-    // Check for collisions between balls and hands using intersection tests
-    this.balls.forEach((ball) => {
-      const ballPos = ball.body.translation();
-      const leftHandPos = this.leftHandMesh.position;
-      const rightHandPos = this.rightHandMesh.position;
-
-      // Calculate distances to both hands
-      const leftDist = Math.sqrt(
-        Math.pow(ballPos.x - leftHandPos.x, 2) +
-          Math.pow(ballPos.y - leftHandPos.y, 2) +
-          Math.pow(ballPos.z - leftHandPos.z, 2)
-      );
-
-      const rightDist = Math.sqrt(
-        Math.pow(ballPos.x - rightHandPos.x, 2) +
-          Math.pow(ballPos.y - rightHandPos.y, 2) +
-          Math.pow(ballPos.z - rightHandPos.z, 2)
-      );
-
-      // Check for collisions with either hand
-      const collisionThreshold = this.handColliderSize + 0.8; // Adjust based on ball and hand sizes
-
-      if (leftDist < collisionThreshold) {
-        console.log("Left hand collision detected");
-        this.handleHandCollision(ball, leftHandPos);
+      // Check for goal
+      if (this.checkForGoal(position)) {
+        this.goalsCount++;
+        if (this.goalsCounter) {
+          this.goalsCounter.textContent = `Goals: ${this.goalsCount}`;
+        }
+        this.scene.remove(ball.mesh);
+        this.rapierWorld.removeRigidBody(ball.body);
+        return false;
       }
 
-      if (rightDist < collisionThreshold) {
-        console.log("Right hand collision detected");
-        this.handleHandCollision(ball, rightHandPos);
-      }
-    });
-
-    // Remove balls that are far behind the goal
-    this.balls = this.balls.filter((ball) => {
-      if (ball.mesh.position.z < -10) {
+      // Remove balls that are far behind the goal
+      if (position.z < -10) {
         this.scene.remove(ball.mesh);
         this.rapierWorld.removeRigidBody(ball.body);
         return false;
       }
       return true;
     });
-
-    this.shootBall();
 
     this.renderer.render(this.scene, this.camera);
   }
@@ -525,6 +528,12 @@ class GoalkeeperGame {
     },
     handPos: THREE.Vector3
   ) {
+    // Increment saves count and update display
+    this.savesCount++;
+    if (this.savesCounter) {
+      this.savesCounter.textContent = `Saves: ${this.savesCount}`;
+    }
+
     const ballPos = ball.body.translation();
 
     // Calculate direction from hand to ball
@@ -559,6 +568,20 @@ class GoalkeeperGame {
         z: zComponent * impulseMagnitude,
       },
       true
+    );
+  }
+
+  private checkForGoal(ballPosition: {
+    x: number;
+    y: number;
+    z: number;
+  }): boolean {
+    return (
+      ballPosition.x >= this.GOAL_BOUNDS.minX &&
+      ballPosition.x <= this.GOAL_BOUNDS.maxX &&
+      ballPosition.y >= this.GOAL_BOUNDS.minY &&
+      ballPosition.y <= this.GOAL_BOUNDS.maxY &&
+      Math.abs(ballPosition.z - this.GOAL_BOUNDS.z) < 0.5 // Check if ball is near goal plane
     );
   }
 }

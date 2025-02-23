@@ -17,6 +17,7 @@
     "@mediapipe/pose": "^0.5.1675469404",
     "@types/three": "^0.173.0",
     "three": "^0.173.0",
+    "tmi.js": "^1.8.5",
     "vite": "^6.1.1",
     "vite-plugin-top-level-await": "^1.5.0",
     "vite-plugin-wasm": "^3.4.1"
