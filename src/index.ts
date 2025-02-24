@@ -252,7 +252,7 @@ class GoalkeeperGame {
 
     const bodyMaterial = new THREE.MeshPhongMaterial({ color: 0x00ff00 });
 
-    // Make hands much larger (visually)
+    // Make hands much larger for better collision detection
     const handGeometry = new THREE.SphereGeometry(1.2); // Increased visual size
     this.leftHandMesh = new THREE.Mesh(handGeometry, bodyMaterial);
     this.rightHandMesh = new THREE.Mesh(handGeometry, bodyMaterial);
@@ -266,23 +266,30 @@ class GoalkeeperGame {
       RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(0, 0.75, 0)
     );
 
-    // Modify the hand colliders with more aggressive collision settings
+    // Modify the hand colliders
     this.leftHandCollider = this.rapierWorld.createCollider(
       RAPIER.ColliderDesc.ball(this.handColliderSize)
         .setRestitution(1.5)
-        .setFriction(0.0)
-        .setSolverGroups(0xffff)
-        .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS)
-        .setSensor(true),
+        .setFriction(0.5)
+        .setSensor(false) // Changed to false for physical collisions
+        .setActiveEvents(
+          RAPIER.ActiveEvents.COLLISION_EVENTS |
+            RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS |
+            RAPIER.ActiveEvents.INTERSECTION_EVENTS
+        ),
       playerBody
     );
+
     this.rightHandCollider = this.rapierWorld.createCollider(
       RAPIER.ColliderDesc.ball(this.handColliderSize)
         .setRestitution(1.5)
-        .setFriction(0.0)
-        .setSolverGroups(0xffff)
-        .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS)
-        .setSensor(true),
+        .setFriction(0.5)
+        .setSensor(false) // Changed to false for physical collisions
+        .setActiveEvents(
+          RAPIER.ActiveEvents.COLLISION_EVENTS |
+            RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS |
+            RAPIER.ActiveEvents.INTERSECTION_EVENTS
+        ),
       playerBody
     );
 
@@ -352,7 +359,8 @@ class GoalkeeperGame {
     const ballCollider = this.rapierWorld.createCollider(
       RAPIER.ColliderDesc.ball(colliderSize)
         .setRestitution(0.8)
-        .setFriction(0.0),
+        .setFriction(0.5)
+        .setDensity(1.0),
       ballBody
     );
 
@@ -442,14 +450,24 @@ class GoalkeeperGame {
 
   private animate() {
     requestAnimationFrame(() => this.animate());
+    this.shootBall();
 
-    // Increase physics precision
-    this.rapierWorld.timestep = 1 / 360; // More precise timestep
-    this.rapierWorld.maxVelocityIterations = 32; // Increased iterations
-    this.rapierWorld.maxPositionIterations = 16;
+    // Debug logging of ball positions and hand positions
+    this.balls.forEach((ball, index) => {
+      const pos = ball.body.translation();
+      console.log(`Ball ${index} position:`, pos.x, pos.y, pos.z);
+    });
+    console.log("Left hand:", this.leftHandMesh.position);
+    console.log("Right hand:", this.rightHandMesh.position);
 
-    // Run more substeps for better collision detection
-    for (let i = 0; i < 4; i++) {
+    // Increase physics precision further
+    this.rapierWorld.timestep = 1 / 480; // Even more precise timestep
+    this.rapierWorld.maxVelocityIterations = 64;
+    this.rapierWorld.maxPositionIterations = 32;
+
+    // Run more substeps
+    for (let i = 0; i < 8; i++) {
+      // Increased substeps
       this.rapierWorld.step();
     }
 
@@ -489,13 +507,42 @@ class GoalkeeperGame {
           console.warn("Could not find rigid body for hand collider.");
         }
       } else {
+        console.warn("Invalid hand body handle:", {
+          leftHandBodyHandle,
+          rightHandBodyHandle,
+        });
       }
     }
 
-    // Update balls and check for goals
+    // Check for collisions
+    for (const ball of this.balls) {
+      if (this.leftHandCollider) {
+        this.rapierWorld.contactPair(
+          ball.collider,
+          this.leftHandCollider,
+          (manifold, flipped) => {
+            this.handleHandCollision(ball, this.leftHandMesh.position);
+          }
+        );
+      }
+      if (this.rightHandCollider) {
+        this.rapierWorld.contactPair(
+          ball.collider,
+          this.rightHandCollider,
+          (manifold, flipped) => {
+            this.handleHandCollision(ball, this.rightHandMesh.position);
+          }
+        );
+      }
+    }
+
+    // Update ball positions with debug visualization
     this.balls = this.balls.filter((ball) => {
       const position = ball.body.translation();
       ball.mesh.position.set(position.x, position.y, position.z);
+
+      // Debug visualization of ball trajectory
+      console.log(`Ball velocity:`, ball.body.linvel());
 
       // Check for goal
       if (this.checkForGoal(position)) {
@@ -528,44 +575,22 @@ class GoalkeeperGame {
     },
     handPos: THREE.Vector3
   ) {
-    // Increment saves count and update display
+    console.log("handle hand collision");
     this.savesCount++;
     if (this.savesCounter) {
       this.savesCounter.textContent = `Saves: ${this.savesCount}`;
     }
 
-    const ballPos = ball.body.translation();
-
-    // Calculate direction from hand to ball
-    const direction = {
-      x: ballPos.x - handPos.x,
-      y: ballPos.y - handPos.y,
-      z: ballPos.z - handPos.z,
-    };
-
-    // Normalize the direction
-    const length = Math.sqrt(
-      direction.x ** 2 + direction.y ** 2 + direction.z ** 2
-    );
-    direction.x /= length;
-    direction.y /= length;
-    direction.z /= length;
-
-    // Reset velocity and apply directional impulse
+    // Simplified deflection logic - always push ball away from goal
     ball.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     ball.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
 
-    const impulseMagnitude = 25; // Increased magnitude
-
-    // Apply impulse with a minimum z-component to ensure backward movement
-    const minZComponent = 0.5;
-    const zComponent = Math.max(Math.abs(direction.z), minZComponent);
-
+    const impulseMagnitude = 30; // Increased for stronger deflection
     ball.body.applyImpulse(
       {
-        x: direction.x * impulseMagnitude,
-        y: direction.y * impulseMagnitude,
-        z: zComponent * impulseMagnitude,
+        x: 0, // No horizontal deflection
+        y: 0, // No vertical deflection
+        z: impulseMagnitude, // Always push away from goal
       },
       true
     );
