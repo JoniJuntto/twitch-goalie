@@ -31,6 +31,9 @@ class GoalkeeperGame {
   private leftHandMesh: THREE.Mesh;
   private rightHandMesh: THREE.Mesh;
   private twitchClient: tmi.Client;
+  private eventQueue: RAPIER.EventQueue;
+  private updateLeftColliderVis: (() => void) | null = null;
+  private updateRightColliderVis: (() => void) | null = null;
 
   // New properties for easier saves
   private handColliderSize = 1.5; // Increased from 1.2
@@ -252,8 +255,7 @@ class GoalkeeperGame {
 
     const bodyMaterial = new THREE.MeshPhongMaterial({ color: 0x00ff00 });
 
-    // Make hands much larger for better collision detection
-    const handGeometry = new THREE.SphereGeometry(1.2); // Increased visual size
+    const handGeometry = new THREE.SphereGeometry(1.2);
     this.leftHandMesh = new THREE.Mesh(handGeometry, bodyMaterial);
     this.rightHandMesh = new THREE.Mesh(handGeometry, bodyMaterial);
     this.leftHandMesh.position.set(-0.5, 1.6, 0);
@@ -262,39 +264,57 @@ class GoalkeeperGame {
     this.player.add(this.leftHandMesh, this.rightHandMesh);
     this.scene.add(this.player);
 
-    const playerBody = this.rapierWorld.createRigidBody(
-      RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(0, 0.75, 0)
+    // Create separate rigid bodies for each hand
+    const leftHandBody = this.rapierWorld.createRigidBody(
+      RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(-0.5, 1.6, 0)
     );
 
-    // Modify the hand colliders
+    const rightHandBody = this.rapierWorld.createRigidBody(
+      RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(0.5, 1.6, 0)
+    );
+
+    const handColliderDesc = RAPIER.ColliderDesc.ball(this.handColliderSize)
+      .setRestitution(1.5)
+      .setFriction(0.5)
+      .setSensor(false)
+      .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+
     this.leftHandCollider = this.rapierWorld.createCollider(
-      RAPIER.ColliderDesc.ball(this.handColliderSize)
-        .setRestitution(1.5)
-        .setFriction(0.5)
-        .setSensor(false) // Changed to false for physical collisions
-        .setActiveEvents(
-          RAPIER.ActiveEvents.COLLISION_EVENTS |
-            RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS |
-            RAPIER.ActiveEvents.INTERSECTION_EVENTS
-        ),
-      playerBody
+      handColliderDesc,
+      leftHandBody
     );
 
     this.rightHandCollider = this.rapierWorld.createCollider(
-      RAPIER.ColliderDesc.ball(this.handColliderSize)
-        .setRestitution(1.5)
-        .setFriction(0.5)
-        .setSensor(false) // Changed to false for physical collisions
-        .setActiveEvents(
-          RAPIER.ActiveEvents.COLLISION_EVENTS |
-            RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS |
-            RAPIER.ActiveEvents.INTERSECTION_EVENTS
-        ),
-      playerBody
+      handColliderDesc,
+      rightHandBody
     );
 
     this.visualizeCollider(this.leftHandMesh, this.handColliderSize);
     this.visualizeCollider(this.rightHandMesh, this.handColliderSize);
+    this.updateLeftColliderVis = this.visualizeColliderPosition(
+      this.leftHandMesh,
+      this.leftHandCollider
+    );
+    this.updateRightColliderVis = this.visualizeColliderPosition(
+      this.rightHandMesh,
+      this.rightHandCollider
+    );
+  }
+
+  private visualizeColliderPosition(
+    mesh: THREE.Mesh,
+    collider: RAPIER.Collider
+  ) {
+    const geometry = new THREE.SphereGeometry(0.1); // Small sphere to mark position
+    const material = new THREE.MeshBasicMaterial({ color: 0xffff00 }); // Yellow color
+    const sphere = new THREE.Mesh(geometry, material);
+    this.scene.add(sphere);
+
+    // Update the sphere's position in the animate loop
+    return () => {
+      const position = collider.translation();
+      sphere.position.set(position.x, position.y, position.z);
+    };
   }
 
   private addLighting() {
@@ -401,26 +421,28 @@ class GoalkeeperGame {
 
   private updatePlayerPosition(landmarks: PoseLandmark[]) {
     try {
-      if (!landmarks || landmarks.length < 33) {
+      if (!landmarks || landmarks?.length < 33) {
         console.warn("Invalid landmarks data");
         return;
       }
 
-      const leftHand = landmarks[15];
-      const rightHand = landmarks[16];
+      const leftHand = landmarks[16];
+      const rightHand = landmarks[15];
 
-      const body = this.player;
+      console.log("Left Hand Landmark:", leftHand);
+      console.log("Right Hand Landmark:", rightHand);
 
+      // Bring hands closer to camera by adjusting z position from -2 to 2
       this.leftHandMesh.position.set(
-        leftHand.x * 10 - 5,
-        (1 - leftHand.y) * 4,
-        0
+        leftHand.x * 20 - 10,
+        (1 - leftHand.y) * 7,
+        2 // Changed from -2 to 2 to bring hands closer
       );
 
       this.rightHandMesh.position.set(
-        rightHand.x * 10 - 5,
-        (1 - rightHand.y) * 4,
-        0
+        rightHand.x * 20 - 10,
+        (1 - rightHand.y) * 7,
+        2 // Changed from -2 to 2 to bring hands closer
       );
     } catch (error) {
       console.error("Error updating player position:", error);
@@ -452,87 +474,95 @@ class GoalkeeperGame {
     requestAnimationFrame(() => this.animate());
     this.shootBall();
 
-    // Debug logging of ball positions and hand positions
-    this.balls.forEach((ball, index) => {
-      const pos = ball.body.translation();
-      console.log(`Ball ${index} position:`, pos.x, pos.y, pos.z);
-    });
-    console.log("Left hand:", this.leftHandMesh.position);
-    console.log("Right hand:", this.rightHandMesh.position);
-
-    // Increase physics precision further
-    this.rapierWorld.timestep = 1 / 480; // Even more precise timestep
+    // Increase physics precision
+    this.rapierWorld.timestep = 1 / 480;
     this.rapierWorld.maxVelocityIterations = 64;
     this.rapierWorld.maxPositionIterations = 32;
 
-    // Run more substeps
+    // Run physics substeps
     for (let i = 0; i < 8; i++) {
-      // Increased substeps
       this.rapierWorld.step();
     }
 
     // Update hand collider positions
     if (this.leftHandCollider && this.rightHandCollider) {
-      const leftHandBodyHandle = this.leftHandCollider.parent();
-      const rightHandBodyHandle = this.rightHandCollider.parent();
+      const leftHandBody = this.leftHandCollider.parent();
+      const rightHandBody = this.rightHandCollider.parent();
 
-      if (
-        leftHandBodyHandle !== null &&
-        rightHandBodyHandle !== null &&
-        typeof leftHandBodyHandle === "number" &&
-        typeof rightHandBodyHandle === "number"
-      ) {
-        const leftHandBody = this.rapierWorld.getRigidBody(leftHandBodyHandle);
-        const rightHandBody =
-          this.rapierWorld.getRigidBody(rightHandBodyHandle);
+      if (leftHandBody && rightHandBody) {
+        // Ensure both hands are using the same coordinate space
+        const leftPos = new RAPIER.Vector3(
+          this.leftHandMesh.position.x,
+          this.leftHandMesh.position.y,
+          this.leftHandMesh.position.z
+        );
+        const rightPos = new RAPIER.Vector3(
+          this.rightHandMesh.position.x,
+          this.rightHandMesh.position.y,
+          this.rightHandMesh.position.z
+        );
 
-        if (leftHandBody && rightHandBody) {
-          leftHandBody.setTranslation(
-            new RAPIER.Vector3(
-              this.leftHandMesh.position.x,
-              this.leftHandMesh.position.y,
-              this.leftHandMesh.position.z
-            ),
-            true
-          );
-          rightHandBody.setTranslation(
-            new RAPIER.Vector3(
-              this.rightHandMesh.position.x,
-              this.rightHandMesh.position.y,
-              this.rightHandMesh.position.z
-            ),
-            true
-          );
-        } else {
-          console.warn("Could not find rigid body for hand collider.");
-        }
-      } else {
-        console.warn("Invalid hand body handle:", {
-          leftHandBodyHandle,
-          rightHandBodyHandle,
-        });
+        // Update both hand positions and wake the bodies
+        leftHandBody.setTranslation(leftPos, true);
+        rightHandBody.setTranslation(rightPos, true);
+        leftHandBody.wakeUp();
+        rightHandBody.wakeUp();
       }
     }
 
-    // Check for collisions
-    for (const ball of this.balls) {
-      if (this.leftHandCollider) {
-        this.rapierWorld.contactPair(
-          ball.collider,
-          this.leftHandCollider,
-          (manifold, flipped) => {
-            this.handleHandCollision(ball, this.leftHandMesh.position);
-          }
+    // Collision event handling
+    const eventQueue = this.rapierWorld.eventQueue;
+    while (eventQueue?.length > 0) {
+      const event = eventQueue.shift();
+      if (event.type === RAPIER.EventType.COLLISION_EVENT) {
+        const collisionEvent = event as RAPIER.CollisionEvent;
+        const collider1 = collisionEvent.collider1();
+        const collider2 = collisionEvent.collider2();
+
+        // Add debug logging
+        console.log(
+          "Collision detected between:",
+          collider1 === this.leftHandCollider
+            ? "left hand"
+            : collider1 === this.rightHandCollider
+            ? "right hand"
+            : "ball",
+          "and",
+          collider2 === this.leftHandCollider
+            ? "left hand"
+            : collider2 === this.rightHandCollider
+            ? "right hand"
+            : "ball"
         );
-      }
-      if (this.rightHandCollider) {
-        this.rapierWorld.contactPair(
-          ball.collider,
-          this.rightHandCollider,
-          (manifold, flipped) => {
-            this.handleHandCollision(ball, this.rightHandMesh.position);
+
+        // Try creating separate rigid bodies for each hand
+        let handCollider: RAPIER.Collider | null = null;
+        let ballCollider: RAPIER.Collider | null = null;
+
+        if ([collider1, collider2].includes(this.leftHandCollider)) {
+          handCollider = this.leftHandCollider;
+          ballCollider = collider1 === handCollider ? collider2 : collider1;
+        } else if ([collider1, collider2].includes(this.rightHandCollider)) {
+          handCollider = this.rightHandCollider;
+          ballCollider = collider1 === handCollider ? collider2 : collider1;
+        }
+
+        if (handCollider && ballCollider) {
+          const ball = this.balls.find((b) => b.collider === ballCollider);
+          if (ball) {
+            const handMesh =
+              handCollider === this.leftHandCollider
+                ? this.leftHandMesh
+                : this.rightHandMesh;
+            console.log(
+              "Processing collision with:",
+              handCollider === this.leftHandCollider
+                ? "left hand"
+                : "right hand"
+            );
+            this.handleHandCollision(ball, handMesh.position);
           }
-        );
+        }
       }
     }
 
@@ -540,9 +570,6 @@ class GoalkeeperGame {
     this.balls = this.balls.filter((ball) => {
       const position = ball.body.translation();
       ball.mesh.position.set(position.x, position.y, position.z);
-
-      // Debug visualization of ball trajectory
-      console.log(`Ball velocity:`, ball.body.linvel());
 
       // Check for goal
       if (this.checkForGoal(position)) {
@@ -565,6 +592,12 @@ class GoalkeeperGame {
     });
 
     this.renderer.render(this.scene, this.camera);
+    if (this.updateLeftColliderVis) {
+      this.updateLeftColliderVis();
+    }
+    if (this.updateRightColliderVis) {
+      this.updateRightColliderVis();
+    }
   }
 
   private handleHandCollision(
@@ -575,22 +608,26 @@ class GoalkeeperGame {
     },
     handPos: THREE.Vector3
   ) {
-    console.log("handle hand collision");
+    console.log("Handle hand collision at position:", handPos);
     this.savesCount++;
     if (this.savesCounter) {
       this.savesCounter.textContent = `Saves: ${this.savesCount}`;
     }
 
-    // Simplified deflection logic - always push ball away from goal
+    // Calculate deflection direction based on hand position
+    const ballPos = ball.body.translation();
+    const deflectionX = (ballPos.x - handPos.x) * 0.5; // Reduced horizontal influence
+    const deflectionY = (ballPos.y - handPos.y) * 0.5; // Reduced vertical influence
+
     ball.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     ball.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
 
-    const impulseMagnitude = 30; // Increased for stronger deflection
+    const impulseMagnitude = 20;
     ball.body.applyImpulse(
       {
-        x: 0, // No horizontal deflection
-        y: 0, // No vertical deflection
-        z: impulseMagnitude, // Always push away from goal
+        x: deflectionX * impulseMagnitude,
+        y: deflectionY * impulseMagnitude,
+        z: impulseMagnitude, // Base forward deflection
       },
       true
     );
